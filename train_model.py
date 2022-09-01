@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from tqdm import tqdm
 
 import random
 
@@ -19,9 +20,10 @@ def get_model_performance(model, dataset, adjacency_matrix, labels):
   return np.sqrt(mean)
 
 
-
-def train_model(model,feats, adjacency, labels, max_feats, min_feats, epochs=5):
-  optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+def train_model(model, dataloader, epochs=5, batchsize=32, lr=0.001, device='cpu'):
+  #set the optimiser to be ADAM
+  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+  #set loss function as the MSE
   criterion = nn.MSELoss()
 
   train_loss = []
@@ -29,46 +31,36 @@ def train_model(model,feats, adjacency, labels, max_feats, min_feats, epochs=5):
   val_rmse = []
 
   if torch.cuda.is_available():
-    criterion = criterion.cuda()
-    min_feats = torch.tensor(min_feats).cuda()
-    max_feats = torch.tensor(max_feats).cuda()
-  else:
-    min_feats = torch.tensor(min_feats)
-    max_feats = torch.tensor(max_feats)
+    criterion = criterion.to(device)
 
-  z = list(zip(feats, adjacency, labels))
-  random.shuffle(z)
-  feats, adjacency, labels = zip(*z)
 
   for epoch in range(epochs):
+
+      dataloader.shuffle()
+      batch_out = []
+      batch_lab = []
       print('epoch '+str(epoch))
-      for i, (x, adj, y) in enumerate(zip(feats, adjacency, labels)):
+      for i, (x, e, ei, adj, lens, y) in tqdm(enumerate(dataloader), total=int(len(dataloader)/batchsize)):
         model.train()
         if torch.cuda.is_available():
-          x = x.cuda()
-          adj = adj.cuda()
-          y = torch.tensor(y).cuda()
+          x = x.to(device)
+          adj = adj.to(device)
+          y = torch.tensor(y).to(device)
         else:
           y = torch.tensor(y)
 
-        x = (x-min_feats)/(max_feats - min_feats)
         x = x.float()
-        output = model(adj, x)
+        output = model.forward(adj, x, lens)
         loss = criterion(output, y)
-        optimizer.zero_grad()
         loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
         train_loss.append(loss.detach().cpu())
         avg_train_loss.append(sum(train_loss)/len(train_loss))
-        optimizer.step()
-        print(i)
-        if i%300 == 0:
-            val_molecules, val_adjacency, val_logDs = zip(*random.sample(list(zip(test_molecules, test_adjacency_matrices, test_logDs)), 20))
-            val_rmse.append(get_model_performance(model, val_molecules, val_adjacency, val_logDs))
-
-
   return model, avg_train_loss, val_rmse
 
 
-device = 'cuda'if torch.cuda.is_available() else 'cpu'
-model = GAT(feats_in_size = len(feat_names), num_attention_heads=5, num_hidden_nodes=15, device=device)
-model, loss, val_rmse = train_model(model,molecules, adjacency_matrices, train_logDs, max_feats, min_feats, epochs=1)
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model = GAT(feats_in_size = 30, num_attention_heads=[3,3], num_hidden_nodes=[40,10], device=device)
+model, loss, val_rmse = train_model(model,dl, epochs=1)
